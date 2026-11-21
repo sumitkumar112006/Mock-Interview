@@ -37,6 +37,7 @@ class InterviewQuestion(BaseModel):
     difficulty: str
     time_limit_minutes: int = 3
     expected_points: List[str] = Field(default_factory=list)
+    source: Optional[str] = None
 
 
 class AnswerEvaluation(BaseModel):

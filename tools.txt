@@ -114,3 +114,9 @@ generate_interview_report	Generate the final report
 get_interview_timeline	Retrieve interview events and timings
 generate_recommended_learning_path	Recommend topics to practice
 compare_answers_with_rubric	Compare answers against evaluation criteria
+
+
+
+
+
+Prosody (pitch variation, energy)	librosa or parselmouth (Praat)	Free, no model download, very fast.

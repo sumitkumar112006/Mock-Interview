@@ -1,11 +1,15 @@
 .styled-button-wrapper {
-  display: inline-flex;
+  display: inline-flex !important;
   vertical-align: middle;
+  width: auto !important;
+  height: auto !important;
 }
 
 /* Force override of any parent container button constraints (like .camera-controls button) */
 .styled-button-wrapper .button.styled-action-btn,
-.styled-button-wrapper .button {
+.styled-button-wrapper .button,
+.camera-controls .styled-button-wrapper .button,
+.camera-controls button.styled-action-btn {
   --btn-purple: #7359ca;
   --btn-purple-dark: #5e45b8;
   --btn-purple-glow: #9e87ec;
@@ -16,17 +20,18 @@
   cursor: pointer;
   position: relative;
 
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   gap: 0.45rem;
 
   transform-origin: center;
 
   width: auto !important;
-  min-width: max-content !important;
-  height: 34px !important;
-  padding: 0 16px !important;
+  min-width: 140px !important;
+  height: 36px !important;
+  padding: 0 18px !important;
+  background: transparent !important;
   background-color: transparent !important;
 
   border: none !important;
@@ -35,7 +40,8 @@
 
   transition: transform var(--transtion), box-shadow var(--transtion);
   white-space: nowrap !important;
-  box-sizing: border-box;
+  box-sizing: border-box !important;
+  overflow: visible !important;
 }
 
 /* The purple brand background layer replacing the black background */
@@ -84,6 +90,14 @@
 
 .styled-button-wrapper .button:active {
   transform: scale(0.98);
+}
+
+.styled-button-wrapper .button:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+  pointer-events: none;
+  transform: none;
+  box-shadow: none;
 }
 
 /* The animated border glow */

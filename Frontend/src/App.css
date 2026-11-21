@@ -92,3 +92,85 @@
     transform: none !important;
   }
 }
+
+/* Dedicated Modal Footer Controls */
+.jd-modal-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 2px;
+  margin-top: auto;
+}
+.jd-modal-footer .modal-footer-back-btn {
+  border: 1px solid #eceaf0;
+  border-radius: 7px;
+  width: 29px;
+  height: 27px;
+  background: white;
+  color: #676271;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.jd-modal-footer .modal-footer-back-btn:hover {
+  background: #f5f3fa;
+  color: #333;
+}
+.jd-modal-footer span {
+  font-size: 8px;
+  color: #a5a1ac;
+  margin-left: 3px;
+}
+
+/* Override any .camera-controls button 29x27 constraint for action and primary buttons */
+.camera-controls .primary-button,
+.camera-controls button.primary-button,
+.camera-controls .styled-button-wrapper,
+.camera-controls .styled-button-wrapper button,
+.camera-controls .styled-action-btn,
+.styled-button-wrapper,
+.styled-button-wrapper button {
+  width: auto !important;
+  min-width: max-content !important;
+  height: 36px !important;
+  box-sizing: border-box !important;
+}
+
+.camera-controls .primary-button,
+.camera-controls button.primary-button {
+  width: auto !important;
+  min-width: max-content !important;
+  height: 36px !important;
+  padding: 0 16px !important;
+  background: linear-gradient(135deg, #7b62d3 0%, #6046be 100%) !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 14px rgba(115, 89, 202, 0.45) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+}
+
+.camera-controls .primary-button:hover,
+.camera-controls button.primary-button:hover {
+  background: linear-gradient(135deg, #8d73e6 0%, #6c51cc 100%) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(115, 89, 202, 0.55) !important;
+}
+
+.camera-controls .primary-button:disabled,
+.camera-controls button.primary-button:disabled {
+  opacity: 0.75 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+}

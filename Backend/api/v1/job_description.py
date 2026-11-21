@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
 from services.document_parser import DocumentParser
 from services.resume_service import ResumeService
+from tools.context import set_global_jd
 
 router = APIRouter(prefix="/jd", tags=["Job Description"])
 
@@ -74,6 +75,13 @@ async def upload_job_description(
     _, detected_skills = ResumeService._detect_skills(extracted_text)
     preview_text = extracted_text[:300] + ("..." if len(extracted_text) > 300 else "")
     jd_id = f"jd_{uuid.uuid4().hex[:12]}"
+
+    # Store in global context so every tool and agent can access it
+    set_global_jd(
+        content=extracted_text,
+        filename=filename,
+        detected_skills=detected_skills
+    )
 
     return JobDescriptionUploadResponse(
         status="success",

@@ -165,9 +165,10 @@ export function ResumeUploadModal({
               />
             )}
 
-            <div className="camera-controls" style={{ padding: '10px 0 2px' }}>
+            <div className="jd-modal-footer">
               <button
                 type="button"
+                className="modal-footer-back-btn"
                 aria-label="Close"
                 title="Close"
                 onClick={onClose}

@@ -23,6 +23,7 @@ export function InterviewRoomPage({
   isAnalyzing = false,
   onPlayAudio = null,
   isPlayingAudio = false,
+  followupCount = 0,
 }) {
   const [micMuted, setMicMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
@@ -77,6 +78,14 @@ export function InterviewRoomPage({
           <span>Role: <strong>{roleTitle}</strong></span>
           <span>•</span>
           <span>Question <strong>{currentQNum}</strong> of {totalQuestions}</span>
+          {(followupCount > 0 || activeQuestion?.is_followup) && (
+            <>
+              <span>•</span>
+              <span style={{ color: '#fbbf24', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                ⚡ Follow-up {followupCount || 1} of 2
+              </span>
+            </>
+          )}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -104,7 +113,7 @@ export function InterviewRoomPage({
               {recording
                 ? 'RECORDING CANDIDATE AUDIO'
                 : (isPlayingAudio
-                    ? 'AI COACH ASKING QUESTION'
+                    ? (activeQuestion?.is_followup ? 'AI COACH ASKING FOLLOW-UP' : 'AI COACH ASKING QUESTION')
                     : (isAnalyzing ? 'ANALYZING CANDIDATE ANSWER' : 'AUDIO READY • YOUR TURN'))}
             </span>
           </div>
@@ -132,9 +141,15 @@ export function InterviewRoomPage({
         <aside className="room-sidebar-panel">
           <div className="room-question-card">
             <div className="room-card-top">
-              <span className="round-chip">
-                {activeQuestion?.round_name || activeQuestion?.category || 'Technical Core'}
-              </span>
+              {activeQuestion?.is_followup ? (
+                <span className="round-chip" style={{ background: 'rgba(245, 158, 11, 0.2)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.4)', fontWeight: 700 }}>
+                  ⚡ Follow-up {followupCount || 1} of 2
+                </span>
+              ) : (
+                <span className="round-chip">
+                  {activeQuestion?.round_name || activeQuestion?.category || 'Technical Core'}
+                </span>
+              )}
 
               {onPlayAudio && (
                 <button
@@ -157,6 +172,12 @@ export function InterviewRoomPage({
                 </button>
               )}
             </div>
+
+            {activeQuestion?.is_followup && activeQuestion?.original_question_text && (
+              <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '8px', lineHeight: '1.4' }}>
+                ↳ Follow-up to: <em>"{activeQuestion.original_question_text}"</em>
+              </div>
+            )}
 
             <h2>{activeQuestion?.question_text || activeQuestion?.title || 'Tell me about yourself.'}</h2>
             <p>{activeQuestion?.intent || activeQuestion?.detail || 'A concise story connecting your past, present, and next steps.'}</p>

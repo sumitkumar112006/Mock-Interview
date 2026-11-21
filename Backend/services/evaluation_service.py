@@ -40,7 +40,7 @@ class EvaluationService:
         # -------------------------------------------------------------
         # 1. Attempt LLM Evaluation with Full Logging
         # -------------------------------------------------------------
-        eval_prompt = f"""You are an expert technical interviewer evaluating a candidate's spoken response.
+        eval_prompt = f"""You are an elite, perceptive technical interviewer evaluating a candidate's spoken response.
 
 INTERVIEW QUESTION:
 "{question_text}"
@@ -51,7 +51,9 @@ EXPECTED CORE COMPETENCIES / KEY POINTS:
 CANDIDATE'S SPOKEN ANSWER:
 "{answer_text}"
 
-Perform a thorough assessment using the STAR framework (Situation, Task, Action, Result).
+Evaluate the response objectively using the STAR framework (Situation, Task, Action, Result).
+Generate concise, spoken-style feedback that the interviewer will speak out loud to the candidate, followed by a sharp, highly contextual follow-up question probing deeper into technical trade-offs, architecture choices, or measurable metrics.
+
 Return ONLY a valid JSON object matching this schema (no markdown, no extra commentary):
 {{
   "score": <integer from 40 to 100>,
@@ -65,9 +67,9 @@ Return ONLY a valid JSON object matching this schema (no markdown, no extra comm
   }},
   "strengths": ["<strength 1>", "<strength 2>"],
   "areas_for_improvement": ["<area 1>", "<area 2>"],
-  "feedback": "<2-3 sentences of constructive, highly actionable feedback highlighting what went well and what to improve>",
-  "needs_followup": <true or false>,
-  "suggested_followup": "<a sharp, contextual follow-up question to probe deeper into technical trade-offs or measurable outcomes>"
+  "feedback": "<2-3 sentences of natural, encouraging spoken feedback suitable to be read aloud to the candidate, noting what was strong and what needed more depth>",
+  "needs_followup": true,
+  "suggested_followup": "<a sharp, direct conversational follow-up question (1-2 sentences) challenging or drilling down into a specific technical choice or number they mentioned>"
 }}"""
 
         raw_llm = LLMManager.call_llm(

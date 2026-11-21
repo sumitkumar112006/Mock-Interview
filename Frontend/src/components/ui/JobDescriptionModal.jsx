@@ -231,9 +231,10 @@ export function JobDescriptionModal({
                   )}
                 </div>
 
-                <div className="camera-controls" style={{ padding: '10px 0 2px' }}>
+                <div className="jd-modal-footer">
                   <button
                     type="button"
+                    className="modal-footer-back-btn"
                     aria-label="Close"
                     title="Close"
                     onClick={onClose}
@@ -242,7 +243,7 @@ export function JobDescriptionModal({
                   </button>
                   <span>Private and stored only in your browser.</span>
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
-                    <Button onClick={() => setStep('resume')} text="Save & Start ↗" />
+                    <Button onClick={() => setStep('resume')} text="Next: Add Resume ↗" />
                   </div>
                 </div>
               </div>
@@ -354,9 +355,10 @@ export function JobDescriptionModal({
                   )}
                 </div>
 
-                <div className="camera-controls" style={{ padding: '10px 0 2px' }}>
+                <div className="jd-modal-footer">
                   <button
                     type="button"
+                    className="modal-footer-back-btn"
                     aria-label="Back to Job Description"
                     title="Back to Job Description"
                     onClick={() => setStep('jd')}
@@ -365,24 +367,20 @@ export function JobDescriptionModal({
                   </button>
                   <span>Parsed locally for question matching.</span>
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
-                    <button
-                      type="button"
-                      className="primary-button"
+                    <Button
                       onClick={isProcessing ? undefined : onStart}
                       disabled={isProcessing}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+                      showSparkle={!isProcessing}
                     >
                       {isProcessing ? (
-                        <>
-                          <Orb state="searching" variant="lighthouse" size={16} />
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                          <Orb state="searching" variant="lighthouse" size={15} />
                           Matching & Calibrating...
-                        </>
+                        </span>
                       ) : (
-                        <>
-                          Start Interview ↗
-                        </>
+                        'Start Interview ↗'
                       )}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </div>

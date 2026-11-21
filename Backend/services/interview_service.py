@@ -10,6 +10,84 @@ from schemas.interview import (
     InterviewSession,
 )
 from ai.llm.llm_manager import LLMManager
+from tools.context import (
+    get_global_jd,
+    get_global_resume,
+    set_global_questions,
+    get_global_questions,
+)
+
+
+SYSTEM_PROMPT = """You are a senior technical interviewer and hiring manager with 15+ years of experience.
+You design interviews that test real depth, not memorized answers. Every question you write must be
+traceable to something specific in the candidate's resume or the job description (JD).
+You output only valid JSON, with no prose, markdown fences, or comments."""
+
+
+def build_prompt(plan, jd_text: str, resume_text: str) -> str:
+    return f"""Design a 5-question progressive technical interview for this candidate.
+
+## CONTEXT
+Target role: {plan.target_role}
+Seniority / difficulty: {plan.difficulty_level}
+
+<job_description>
+{jd_text}
+</job_description>
+
+<candidate_resume>
+{resume_text}
+</candidate_resume>
+
+## STEP 1: ANALYZE (internal, do not output)
+Before writing questions, identify:
+1. Top 5-8 must-have skills/technologies in the JD.
+2. Resume projects, roles, and achievements that overlap with those skills (the strongest anchors).
+3. Gaps: JD requirements missing or only lightly mentioned in the resume (good probing areas).
+4. Claims on the resume that are vague or unquantified (worth verifying with a follow-up-style question).
+
+## STEP 2: QUESTION STRUCTURE
+Q1. Icebreaker + architecture overview
+    Ask them to walk through ONE specific resume project most relevant to the JD, focusing on
+    architecture, their personal role, and key technology choices. Name the project.
+Q2. Deep technical problem solving + performance
+    Pick a real challenge implied by a resume project or JD responsibility (e.g. slow queries,
+    memory, concurrency, latency). Ask how they diagnosed and optimized it, or how they would.
+Q3. Behavioral (STAR)
+    Ground it in a situation plausible for their listed experience (conflict, ownership,
+    tight deadline, leadership). Must reference their context, not a generic "tell me about a conflict".
+Q4. System design / scalability / edge cases
+    Scale up a system from the JD domain or their project: 10x traffic, failures, consistency,
+    caching, data modeling. Include one concrete constraint (e.g. scale, latency, cost).
+Q5. Code quality, testing, best practices
+    Tie to their stack (e.g. testing strategy for their API, code review, error handling, CI/CD,
+    security) and to quality practices the JD mentions.
+
+## STEP 3: QUALITY RULES
+- Each question must contain at least one concrete anchor: a named project, technology, or JD
+  requirement. No generic template questions.
+- Difficulty must match "{plan.difficulty_level}": adjust depth, ambiguity, and expected trade-off reasoning.
+- Progression: each question should be harder or deeper than the previous (Q3 excepted).
+- If the JD requires a skill the resume lacks, ask about it at an exploratory level
+  ("how would you approach...") and do NOT assume they have used it.
+- Never invent resume facts. Only reference what is actually written.
+- Each question is 1-3 sentences, spoken-style, answerable in 2-4 minutes. One main ask per question.
+- No yes/no questions, trivia, or definition-only questions ("What is REST?").
+- No duplicate topics across the 5 questions.
+
+## STEP 4: OUTPUT
+Return ONLY a valid JSON array of exactly 5 objects, in order, with this schema:
+[
+  {{
+    "round": "<Icebreaker | Technical Deep Dive | Behavioral | System Design | Code Quality>",
+    "topic": "<specific topic, e.g. 'Redis caching in OrderService project'>",
+    "question": "<the question to ask the candidate>",
+    "intent": "<what this question assesses and why it matters for this JD>",
+    "source": "<which resume item / JD requirement this question is anchored to>",
+    "expected": ["<key point 1>", "<key point 2>", "<key point 3>", "<optional red flag or trade-off to listen for>"]
+  }}
+]
+Output must be parseable by json.loads with no text before or after it."""
 
 
 class InterviewService:
@@ -120,35 +198,19 @@ class InterviewService:
         else:
             plan = cls.generate_interview_plan(target_role=str(plan_or_role))
 
-        # Generate custom tailored questions via LLM if not provided
+        # Generate custom tailored questions via LLM anchored directly to JD and Resume
         if not questions:
             questions = []
-            prompt = f"""Generate 5 realistic, progressive technical interview questions for the following role:
-Role: {plan.target_role}
-Seniority: {plan.difficulty_level}
+            jd_text = get_global_jd() or f"Role: {plan.target_role}\nSeniority: {plan.difficulty_level}\nRequirements: Fullstack development, architecture, performance, problem solving."
+            resume_text = get_global_resume() or "Candidate with software engineering experience across frontend, backend, system architecture, and collaboration."
 
-Requirements:
-- 1st question: Icebreaker & architecture overview.
-- 2nd question: Deep technical problem solving & performance.
-- 3rd question: Behavioral / STAR methodology (conflict, ownership, or leadership).
-- 4th question: System design / scalability or edge cases.
-- 5th question: Code quality, testing, or best practices.
+            prompt = build_prompt(plan, jd_text=jd_text, resume_text=resume_text)
 
-Return ONLY a valid JSON list of 5 objects matching this schema:
-[
-  {{
-    "round": "Technical Core",
-    "topic": "<Specific Topic>",
-    "question": "<The question text to ask the candidate>",
-    "intent": "<What this question assesses>",
-    "expected": ["<key expected point 1>", "<key expected point 2>"]
-  }}
-]"""
             raw_llm = LLMManager.call_llm(
                 prompt=prompt,
-                system_instruction="You are a Principal Engineer and veteran technical interviewer at a top tech company. Return only valid JSON.",
+                system_instruction=SYSTEM_PROMPT,
                 temperature=0.3,
-                max_tokens=1000,
+                max_tokens=2500,
                 context_name="InterviewQuestionGeneration"
             )
 
@@ -176,9 +238,30 @@ Return ONLY a valid JSON list of 5 objects matching this schema:
                         intent=tmpl.get("intent", "Evaluate problem-solving and architectural clarity."),
                         difficulty=plan.difficulty_level,
                         time_limit_minutes=3,
-                        expected_points=tmpl.get("expected", ["System design", "Performance"])
+                        expected_points=tmpl.get("expected", ["System design", "Performance"]),
+                        source=tmpl.get("source")
                     )
                 )
+
+            # Store the generated questions in the shared global variable accessible to every tool
+            set_global_questions([q.model_dump() for q in questions])
+
+            # Console output of generated questions to terminal
+            print("\n" + "=" * 75)
+            print("🎯 [LLM GENERATED INTERVIEW QUESTIONS]")
+            print(f"💼 Role: {plan.target_role} | 📈 Seniority: {plan.difficulty_level}")
+            print(f"📊 Total Questions: {len(questions)}")
+            print("=" * 75)
+            for q in questions:
+                print(f"🔹 Q{q.question_number} [{q.round_name}] • {q.topic}")
+                print(f"   ❓ Ask:      {q.question_text}")
+                print(f"   🎯 Intent:   {q.intent}")
+                if q.source:
+                    print(f"   ⚓ Anchor:   {q.source}")
+                if q.expected_points:
+                    print(f"   ✅ Expected: {', '.join(q.expected_points)}")
+                print("-" * 75)
+            print("=" * 75 + "\n")
 
         started_at = datetime.now(timezone.utc).isoformat()
 

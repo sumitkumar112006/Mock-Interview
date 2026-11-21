@@ -2,6 +2,7 @@ from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
 from schemas.candidate import ResumeUploadResponse, ResumeAnalysisResponse
 from services.resume_service import ResumeService
+from tools.context import set_global_resume
 
 router = APIRouter(prefix="/resume", tags=["Resume"])
 
@@ -42,6 +43,12 @@ async def upload_and_parse_resume(file: UploadFile = File(...)):
 
     try:
         parsed_data = ResumeService.parse_resume(file.filename, content)
+        # Store in global context so every tool and agent can access it
+        set_global_resume(
+            content=parsed_data.raw_text,
+            filename=file.filename,
+            parsed_data=parsed_data.model_dump()
+        )
         return ResumeUploadResponse(
             status="success",
             message="Resume parsed successfully",
@@ -70,8 +77,10 @@ async def analyze_candidate_resume(
             if not content:
                 raise HTTPException(status_code=400, detail="Uploaded file is empty.")
             parsed = ResumeService.parse_resume(file.filename, content)
+            set_global_resume(parsed.raw_text, filename=file.filename, parsed_data=parsed.model_dump())
             analysis = ResumeService.analyze_resume(parsed)
         elif text and text.strip():
+            set_global_resume(text.strip())
             analysis = ResumeService.analyze_resume(text.strip())
         else:
             raise HTTPException(

@@ -51,6 +51,7 @@ function App() {
   const [recordedAudioUrl, setRecordedAudioUrl] = useState(null)
   const [recordingError, setRecordingError] = useState(null)
   const [isPlayingAudio, setIsPlayingAudio] = useState(false)
+  const [followupCount, setFollowupCount] = useState(0)
 
   const mediaRecorderRef = useRef(null)
   const micStreamRef = useRef(null)
@@ -88,6 +89,11 @@ function App() {
       return
     }
 
+    // Do not re-trigger auto-play if this is a follow-up (it is spoken conversationally upon evaluation)
+    if (activeQuestion.is_followup) {
+      return
+    }
+
     const qKey = `${activeQuestion.question_id || activeQuestion.question_number || 'q'}_${activeQuestion.question_text || activeQuestion.title}`
 
     // Only speak automatically if this specific question has not been spoken yet
@@ -100,7 +106,7 @@ function App() {
       }, 400)
       return () => clearTimeout(timer)
     }
-  }, [isInInterviewRoom, activeQuestion?.question_number, activeQuestion?.question_id, activeQuestion?.question_text])
+  }, [isInInterviewRoom, activeQuestion?.question_number, activeQuestion?.question_id, activeQuestion?.question_text, activeQuestion?.is_followup])
 
   // Timer while recording
   useEffect(() => {
@@ -345,6 +351,9 @@ function App() {
           expectedPoints: activeQuestion.expected_points || [],
         })
         setEvaluation(evalRes)
+
+        // Responsiveness: AI Coach speaks evaluation result + follow-up question
+        await handleSpeakEvaluationAndFollowup(evalRes)
       }
     } catch (err) {
       console.error('Transcription API failure:', err)
@@ -409,9 +418,10 @@ function App() {
   }
 
   // Play interviewer speech using browser Web Speech API (zero-latency, natural tone)
-  const speakWithBrowserWebSpeech = (text) => {
+  const speakWithBrowserWebSpeech = (text, onEndCallback = null) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       setIsPlayingAudio(false)
+      if (onEndCallback) onEndCallback()
       return
     }
 
@@ -441,6 +451,7 @@ function App() {
         setIsPlayingAudio(false)
         activeUtteranceRef.current = null
         window.__activeUtterance = null
+        if (onEndCallback) onEndCallback()
       }
 
       utterance.onerror = (e) => {
@@ -448,13 +459,53 @@ function App() {
         setIsPlayingAudio(false)
         activeUtteranceRef.current = null
         window.__activeUtterance = null
+        if (onEndCallback) onEndCallback()
       }
 
       window.speechSynthesis.speak(utterance)
     } catch (err) {
       console.warn('Browser speech error:', err)
       setIsPlayingAudio(false)
+      if (onEndCallback) onEndCallback()
     }
+  }
+
+  // Unified speech synthesis player (Edge-TTS cloud with Web Speech API instant fallback)
+  const handlePlaySpeech = (speechText) => {
+    return new Promise(async (resolve) => {
+      stopAllQuestionAudio()
+      setIsPlayingAudio(true)
+
+      let playedWithBackend = false
+      try {
+        const fetchPromise = synthesizeSpeech(speechText)
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('TTS_TIMEOUT')), 2500))
+
+        const res = await Promise.race([fetchPromise, timeoutPromise])
+        if (res && res.audio_base64 && res.audio_format === 'mp3') {
+          const audioSrc = `data:audio/${res.audio_format};base64,${res.audio_base64}`
+          const audio = new Audio(audioSrc)
+          audioPlayerRef.current = audio
+          audio.onended = () => {
+            setIsPlayingAudio(false)
+            audioPlayerRef.current = null
+            resolve()
+          }
+          audio.onerror = () => {
+            audioPlayerRef.current = null
+            speakWithBrowserWebSpeech(speechText, resolve)
+          }
+          await audio.play()
+          playedWithBackend = true
+        }
+      } catch (e) {
+        console.log('ℹ️ Utilizing Browser Speech Synthesis:', e?.message || e)
+      }
+
+      if (!playedWithBackend) {
+        speakWithBrowserWebSpeech(speechText, resolve)
+      }
+    })
   }
 
   // Read question aloud via TTS (Backend Edge-TTS / Web Speech API)
@@ -467,44 +518,68 @@ function App() {
 
     const qNum = activeQuestion?.question_number || 1
     const rawText = textToPlay || activeQuestion?.question_text || activeQuestion?.title || 'Walk me through the architecture of the most complex system you have built.'
-    const speechText = `Question ${qNum}: ${rawText}`
+    const speechText = textToPlay
+      ? textToPlay
+      : (activeQuestion?.is_followup
+          ? `Follow-up question ${activeQuestion.followup_number}: ${rawText}`
+          : `Question ${qNum}: ${rawText}`)
 
-    setIsPlayingAudio(true)
+    await handlePlaySpeech(speechText)
+  }
 
-    // Attempt backend Edge-TTS with 2.5s race timeout; seamlessly fallback to Web Speech API
-    let playedWithBackend = false
-    try {
-      const fetchPromise = synthesizeSpeech(speechText)
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('TTS_TIMEOUT')), 2500))
+  // Speak evaluation result + transition to follow-up question (max 2 followups per question)
+  const handleSpeakEvaluationAndFollowup = async (evalRes) => {
+    const feedbackText = evalRes?.feedback || "Thank you for your answer."
+    const followupQuestion = evalRes?.suggested_followup
+    const currentFollowups = followupCount
 
-      const res = await Promise.race([fetchPromise, timeoutPromise])
-      if (res && res.audio_base64 && res.audio_format === 'mp3') {
-        const audioSrc = `data:audio/${res.audio_format};base64,${res.audio_base64}`
-        const audio = new Audio(audioSrc)
-        audioPlayerRef.current = audio
-        audio.onended = () => {
-          setIsPlayingAudio(false)
-          audioPlayerRef.current = null
-        }
-        audio.onerror = () => {
-          audioPlayerRef.current = null
-          speakWithBrowserWebSpeech(speechText)
-        }
-        await audio.play()
-        playedWithBackend = true
-      }
-    } catch (e) {
-      console.log('ℹ️ Utilizing Browser Speech Synthesis:', e?.message || e)
+    // Rule: Maximum 2 follow-up questions per main question
+    const canAskFollowup = currentFollowups < 2 && Boolean(followupQuestion)
+
+    let spokenMessage = ""
+    if (canAskFollowup) {
+      const nextFNum = currentFollowups + 1
+      spokenMessage = `${feedbackText} Here is follow-up question ${nextFNum}: ${followupQuestion}`
+    } else if (currentFollowups >= 2) {
+      spokenMessage = `${feedbackText} We have thoroughly explored this question. You can now advance to the next question.`
+    } else {
+      spokenMessage = feedbackText
     }
 
-    if (!playedWithBackend) {
-      speakWithBrowserWebSpeech(speechText)
+    // AI Coach speaks evaluation feedback + follow-up
+    await handlePlaySpeech(spokenMessage)
+
+    // If follow-up allowed, update active question state to the follow-up
+    if (canAskFollowup) {
+      const nextFNum = currentFollowups + 1
+      setFollowupCount(nextFNum)
+
+      const originalQText = activeQuestion.original_question_text || activeQuestion.question_text || activeQuestion.title
+      setActiveQuestion({
+        ...activeQuestion,
+        original_question_text: originalQText,
+        is_followup: true,
+        followup_number: nextFNum,
+        question_text: followupQuestion,
+        intent: `Follow-up ${nextFNum} of 2: Probing deeper into technical details, trade-offs, and metrics.`,
+        expected_points: ["Concrete technical trade-offs", "Quantifiable metrics and edge case handling"]
+      })
+
+      // Reset recording state so candidate can record their response to this follow-up
+      setRecordedAnswer(null)
+      if (recordedAudioUrlRef.current) {
+        URL.revokeObjectURL(recordedAudioUrlRef.current)
+        recordedAudioUrlRef.current = null
+      }
+      setRecordedAudioUrl(null)
+      setRecordingError(null)
     }
   }
 
   // Advance to next prompt
   const handleNextPrompt = async () => {
     stopAllQuestionAudio()
+    setFollowupCount(0) // Reset follow-up counter for new main question!
     setEvaluation(null)
     setRecordedAnswer(null)
     if (recordedAudioUrlRef.current) {
@@ -596,6 +671,7 @@ function App() {
           isAnalyzing={isAnalyzing}
           onPlayAudio={handlePlayQuestionAudio}
           isPlayingAudio={isPlayingAudio}
+          followupCount={followupCount}
         />
         {showToast && <div className="toast"><span>✓</span> {toastMessage}</div>}
       </>
