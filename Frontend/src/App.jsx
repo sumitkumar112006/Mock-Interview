@@ -44,6 +44,7 @@ function App() {
   const [jdFile, setJdFile] = useState(null)
   const [resumeFile, setResumeFile] = useState(null)
   const [resumeText, setResumeText] = useState('')
+  const [difficulty, setDifficulty] = useState('intermediate')
   const [isSettingUp, setIsSettingUp] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [evaluation, setEvaluation] = useState(null)
@@ -145,6 +146,7 @@ function App() {
       // 3. Tool call to initialize interview session & generate calibrated plan
       const newSession = await startInterviewSession({
         planOrRole: jobDescription ? 'Tailored Job Role' : 'Software Engineer',
+        difficulty: difficulty || 'intermediate',
       })
 
       setSession(newSession)
@@ -532,6 +534,8 @@ function App() {
     const feedbackText = evalRes?.feedback || "Thank you for your answer."
     const followupQuestion = evalRes?.suggested_followup
     const currentFollowups = followupCount
+    const totalQuestions = session?.questions?.length || 5
+    const isLastQuestion = (activeQuestion?.question_number || 1) >= totalQuestions
 
     // Rule: Maximum 2 follow-up questions per main question
     const canAskFollowup = currentFollowups < 2 && Boolean(followupQuestion)
@@ -540,6 +544,8 @@ function App() {
     if (canAskFollowup) {
       const nextFNum = currentFollowups + 1
       spokenMessage = `${feedbackText} Here is follow-up question ${nextFNum}: ${followupQuestion}`
+    } else if (isLastQuestion) {
+      spokenMessage = `${feedbackText} Congratulations! You have successfully completed all ${totalQuestions} questions and follow-ups. That concludes your interview session.`
     } else if (currentFollowups >= 2) {
       spokenMessage = `${feedbackText} We have thoroughly explored this question. You can now advance to the next question.`
     } else {
@@ -573,12 +579,27 @@ function App() {
       }
       setRecordedAudioUrl(null)
       setRecordingError(null)
+    } else if (isLastQuestion) {
+      // Question 5 (and all its follow-ups) have been answered and evaluated -> Stop interview automatically
+      console.log('🏁 [Interview] Reached Question 5 and completed all answers and follow-ups. Concluding interview.')
+      window.setTimeout(() => {
+        finishPractice()
+      }, 1800)
     }
   }
 
   // Advance to next prompt
   const handleNextPrompt = async () => {
     stopAllQuestionAudio()
+    const totalQuestions = session?.questions?.length || 5
+    const isLastQuestion = (activeQuestion?.question_number || 1) >= totalQuestions
+
+    // If on the last question (Question 5), conclude the session rather than looping
+    if (isLastQuestion) {
+      await finishPractice()
+      return
+    }
+
     setFollowupCount(0) // Reset follow-up counter for new main question!
     setEvaluation(null)
     setRecordedAnswer(null)
@@ -605,6 +626,11 @@ function App() {
 
     const curIdx = fallbackQuestions.findIndex((q) => q.question_number === activeQuestion?.question_number)
     const nextIdx = (curIdx + 1) % fallbackQuestions.length
+    // If wrapping back to start, finish practice instead
+    if (nextIdx === 0 || curIdx >= fallbackQuestions.length - 1) {
+      await finishPractice()
+      return
+    }
     setActiveQuestion(fallbackQuestions[nextIdx])
   }
 
@@ -633,12 +659,13 @@ function App() {
       }
     }
 
-    setToastMessage('Session complete. Excellent work showing up!')
+    setToastMessage('🎉 Practice session completed! All 5 questions and follow-ups finished.')
     setShowToast(true)
-    window.setTimeout(() => setShowToast(false), 3500)
+    window.setTimeout(() => setShowToast(false), 4500)
     setIsInInterviewRoom(false)
     setSession(null)
     setEvaluation(null)
+    setFollowupCount(0)
   }
 
   const formatTime = (value) => `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`
@@ -773,7 +800,7 @@ function App() {
         </div>
       </main>
 
-      {/* Schedule Interview Modal: Step 1 (JD Input) -> Step 2 (Resume Input) */}
+      {/* Schedule Interview Modal: Step 1 (JD Input) -> Step 2 (Resume Input) -> Step 3 (Difficulty) */}
       <JobDescriptionModal
         isOpen={isScheduling}
         jobDescription={jobDescription}
@@ -784,6 +811,8 @@ function App() {
         setResumeFile={setResumeFile}
         resumeText={resumeText}
         setResumeText={setResumeText}
+        difficulty={difficulty}
+        setDifficulty={setDifficulty}
         onClose={() => setIsScheduling(false)}
         onStart={handleProcessAndEnterInterviewRoom}
         isProcessing={isSettingUp}

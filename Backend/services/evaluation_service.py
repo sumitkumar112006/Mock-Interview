@@ -1,8 +1,9 @@
 import re
 import json
+import time
 import uuid
 from typing import List, Optional, Dict, Any
-from schemas.interview import AnswerEvaluation, FollowupQuestion
+from schemas.interview import AnswerEvaluation, FollowupQuestion, Difficulty, DIFFICULTY_GUIDE
 from ai.llm.llm_manager import LLMManager
 
 
@@ -26,16 +27,27 @@ class EvaluationService:
         question_id: str,
         question_text: str,
         answer_text: str,
-        expected_points: Optional[List[str]] = None
+        expected_points: Optional[List[str]] = None,
+        difficulty: Optional[str] = "intermediate"
     ) -> AnswerEvaluation:
         """
         Evaluates candidate response across relevance, STAR depth, and completeness.
-        Uses LLM evaluation with comprehensive request/response logging.
+        Uses LLM evaluation with comprehensive request/response logging calibrated to the target difficulty.
         """
         if not answer_text or not answer_text.strip():
             raise ValueError("Candidate answer text cannot be empty.")
 
         expected_points = expected_points or []
+        start_eval_time = time.perf_counter()
+
+        # Resolve difficulty rubric
+        diff_key = difficulty or "intermediate"
+        if isinstance(diff_key, str):
+            try:
+                diff_key = Difficulty(diff_key.lower())
+            except ValueError:
+                diff_key = Difficulty.intermediate
+        guide = DIFFICULTY_GUIDE.get(diff_key, DIFFICULTY_GUIDE[Difficulty.intermediate])
 
         # -------------------------------------------------------------
         # 1. Attempt LLM Evaluation with Full Logging
@@ -45,13 +57,17 @@ class EvaluationService:
 INTERVIEW QUESTION:
 "{question_text}"
 
+TARGET DIFFICULTY LEVEL: {guide['label']}
+CALIBRATED EVALUATION RUBRIC FOR THIS LEVEL:
+{guide['evaluation']}
+
 EXPECTED CORE COMPETENCIES / KEY POINTS:
 {json.dumps(expected_points)}
 
 CANDIDATE'S SPOKEN ANSWER:
 "{answer_text}"
 
-Evaluate the response objectively using the STAR framework (Situation, Task, Action, Result).
+Evaluate the response objectively using the STAR framework (Situation, Task, Action, Result) calibrated to the {guide['label']} level.
 Generate concise, spoken-style feedback that the interviewer will speak out loud to the candidate, followed by a sharp, highly contextual follow-up question probing deeper into technical trade-offs, architecture choices, or measurable metrics.
 
 Return ONLY a valid JSON object matching this schema (no markdown, no extra commentary):
@@ -66,7 +82,7 @@ Return ONLY a valid JSON object matching this schema (no markdown, no extra comm
     "Result": "<Identified or Needs quantifiable metrics>"
   }},
   "strengths": ["<strength 1>", "<strength 2>"],
-  "areas_for_improvement": ["<area 1>", "<area 2>"],
+  "improvement": ["<concrete area for improvement or missing technical point 1>", "<concrete area 2>"],
   "feedback": "<2-3 sentences of natural, encouraging spoken feedback suitable to be read aloud to the candidate, noting what was strong and what needed more depth>",
   "needs_followup": true,
   "suggested_followup": "<a sharp, direct conversational follow-up question (1-2 sentences) challenging or drilling down into a specific technical choice or number they mentioned>"
@@ -89,6 +105,9 @@ Return ONLY a valid JSON object matching this schema (no markdown, no extra comm
                     clean_json = re.sub(r"\s*```$", "", clean_json)
 
                 data = json.loads(clean_json)
+                imp_list = data.get("improvement") or data.get("areas_for_improvement") or ["Quantify metrics further."]
+                eval_latency_ms = round((time.perf_counter() - start_eval_time) * 1000, 1)
+                print(f"⏱️ [EvaluationService] Question {question_id} evaluated via LLM in {eval_latency_ms}ms")
                 return AnswerEvaluation(
                     evaluation_id=f"eval_{uuid.uuid4().hex[:10]}",
                     question_id=question_id,
@@ -102,7 +121,8 @@ Return ONLY a valid JSON object matching this schema (no markdown, no extra comm
                         "Result": "Identified"
                     }),
                     strengths=data.get("strengths", ["Clear technical communication."]),
-                    areas_for_improvement=data.get("areas_for_improvement", ["Quantify metrics further."]),
+                    areas_for_improvement=imp_list,
+                    improvement=imp_list,
                     feedback=data.get("feedback", "Good explanation of system concepts and execution."),
                     needs_followup=bool(data.get("needs_followup", False)),
                     suggested_followup=data.get("suggested_followup", "How did you manage rollback strategy for that deployment?")
@@ -155,6 +175,8 @@ Return ONLY a valid JSON object matching this schema (no markdown, no extra comm
 
         suggested_followup = "Could you quantify the measurable outcome or scale of this solution?" if not has_numbers else "How did you handle error cases in that approach?"
         feedback = f"Solid response covering key aspects. Your answer demonstrated clarity (Score: {overall_score}/100)."
+        eval_latency_ms = round((time.perf_counter() - start_eval_time) * 1000, 1)
+        print(f"⏱️ [EvaluationService] Question {question_id} evaluated via Heuristic Fallback in {eval_latency_ms}ms")
 
         return AnswerEvaluation(
             evaluation_id=f"eval_{uuid.uuid4().hex[:10]}",
@@ -165,6 +187,7 @@ Return ONLY a valid JSON object matching this schema (no markdown, no extra comm
             star_alignment=star_alignment,
             strengths=strengths,
             areas_for_improvement=improvements,
+            improvement=improvements,
             feedback=feedback,
             needs_followup=needs_followup,
             suggested_followup=suggested_followup

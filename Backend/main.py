@@ -1,9 +1,12 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 from typing import Optional, List
 import io
 import re
+import time
 import uuid
 import uvicorn
 from pypdf import PdfReader
@@ -23,11 +26,76 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def add_process_time_and_error_handling(request: Request, call_next):
+    """
+    Measures high-precision latency in milliseconds for every API request
+    and attaches X-Process-Time-Ms to response headers.
+    """
+    start_time = time.perf_counter()
+    try:
+        response = await call_next(request)
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        response.headers["X-Process-Time-Ms"] = str(latency_ms)
+        print(f"⚡ [API {response.status_code}] {request.method} {request.url.path} | ⏱️ {latency_ms}ms")
+        return response
+    except Exception as exc:
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        print(f"❌ [API 500 ERROR] {request.method} {request.url.path} | ⏱️ {latency_ms}ms | Error: {exc}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error_type": "InternalServerError",
+                "message": f"Server processing error: {str(exc)}",
+                "path": request.url.path,
+                "latency_ms": latency_ms
+            },
+            headers={"X-Process-Time-Ms": str(latency_ms)}
+        )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """
+    Standardized fast JSON response for HTTPExceptions with millisecond timing.
+    """
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "status": "error",
+            "error_type": "HTTPException",
+            "status_code": exc.status_code,
+            "message": exc.detail,
+            "path": request.url.path
+        }
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Standardized fast JSON response for request validation errors.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "status": "validation_error",
+            "error_type": "RequestValidationError",
+            "message": "Input validation failed",
+            "errors": exc.errors(),
+            "path": request.url.path
+        }
+    )
+
 from api.v1.interview import router as interview_router
 from api.v1.voice import router as voice_router
+from api.v1.reports import router as reports_router
 
 app.include_router(interview_router, prefix="/api/v1")
 app.include_router(voice_router, prefix="/api/v1")
+app.include_router(reports_router, prefix="/api/v1")
 
 class Question(BaseModel):
     category: str

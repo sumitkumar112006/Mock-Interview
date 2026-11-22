@@ -21,12 +21,13 @@ LLM_LOG_FILE = LOG_DIR / "llm_interactions.log"
 
 class LLMManager:
     """
-    Centralized LLM execution & logging engine.
-    Logs EVERY request and EVERY response with timestamps, parameters, latency,
-    and token metrics to both stdout and a structured persistent log file.
+    Centralized LLM execution & logging engine with millisecond-precision timing,
+    strict timeout enforcement, fast error handling, and automated fallback chains.
     """
 
     MODEL_NAME = "qwen/qwen3.8-27b"
+    FALLBACK_MODEL = "llama-3.3-70b-versatile"
+    DEFAULT_TIMEOUT_SECONDS = 6.0
     _client = None
 
     @classmethod
@@ -37,7 +38,8 @@ class LLMManager:
                 return None
             try:
                 from groq import Groq
-                cls._client = Groq(api_key=api_key)
+                # Strict timeout and single retry to guarantee millisecond fail-fast responsiveness
+                cls._client = Groq(api_key=api_key, timeout=cls.DEFAULT_TIMEOUT_SECONDS, max_retries=1)
             except Exception as e:
                 print(f"[LLMManager] Groq initialization warning: {e}")
                 cls._client = None
@@ -51,11 +53,13 @@ class LLMManager:
         temperature: float = 0.3,
         max_tokens: int = 1200,
         context_name: str = "General",
-        response_format: Optional[Dict[str, str]] = None
+        response_format: Optional[Dict[str, str]] = None,
+        timeout: Optional[float] = None
     ) -> Optional[str]:
         """
-        Executes an LLM chat completion, comprehensively logging both the request and response.
+        Executes an LLM chat completion with millisecond latency logging and robust error handling.
         """
+        effective_timeout = timeout or cls.DEFAULT_TIMEOUT_SECONDS
         client = cls.get_client()
         timestamp_req = datetime.now(timezone.utc).isoformat()
         req_id = f"req_{int(time.time() * 1000)}"
@@ -69,34 +73,31 @@ class LLMManager:
             "context": context_name,
             "timestamp": timestamp_req,
             "model": cls.MODEL_NAME,
-            "system_instruction": system_instruction,
-            "prompt": prompt,
+            "timeout_seconds": effective_timeout,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
 
-        # Terminal banner
         print("\n" + "=" * 70)
-        print(f"🤖 [LLM REQUEST] Context: {context_name} | ID: {req_id}")
+        print(f"🤖 [LLM REQUEST] Context: {context_name} | ID: {req_id} | Timeout: {effective_timeout}s")
         print(f"🕒 Timestamp: {timestamp_req}")
-        print(f"🧠 Model:     {cls.MODEL_NAME}")
+        print(f"🧠 Primary Model: {cls.MODEL_NAME}")
         print("-" * 70)
         print("📋 System Instruction:")
-        print(system_instruction[:300] + ("..." if len(system_instruction) > 300 else ""))
+        print(system_instruction[:250] + ("..." if len(system_instruction) > 250 else ""))
         print("-" * 70)
-        print("💬 Prompt:")
-        print(prompt[:600] + ("..." if len(prompt) > 600 else ""))
+        print("💬 Prompt Snippet:")
+        print(prompt[:400] + ("..." if len(prompt) > 400 else ""))
         print("=" * 70 + "\n")
 
-        # Persist to log file
         cls._append_to_log(req_log_entry)
 
         if not client:
-            print(f"[LLMManager] Groq client unavailable. Falling back to rule-based engine.")
+            print(f"[LLMManager] Groq client unavailable. Fast-failing in 0ms to rule-based fallback.")
             return None
 
         # -------------------------------------------------------------
-        # 2. EXECUTE LLM CALL
+        # 2. EXECUTE LLM CALL WITH MILLISECOND TIMER
         # -------------------------------------------------------------
         start_time = time.perf_counter()
         messages = [
@@ -109,13 +110,14 @@ class LLMManager:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "timeout": effective_timeout,
         }
         if response_format:
             kwargs["response_format"] = response_format
 
         try:
             chat_completion = client.chat.completions.create(**kwargs)
-            latency_ms = round((time.perf_counter() - start_time) * 1000, 1)
+            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
             timestamp_res = datetime.now(timezone.utc).isoformat()
 
             raw_response = chat_completion.choices[0].message.content or ""
@@ -126,9 +128,6 @@ class LLMManager:
                 "total_tokens": getattr(usage, "total_tokens", None) if usage else None,
             }
 
-            # -------------------------------------------------------------
-            # 3. LOG RESPONSE
-            # -------------------------------------------------------------
             res_log_entry = {
                 "event": "LLM_RESPONSE",
                 "request_id": req_id,
@@ -137,36 +136,50 @@ class LLMManager:
                 "latency_ms": latency_ms,
                 "model": cls.MODEL_NAME,
                 "tokens": tokens_info,
-                "response": raw_response,
+                "response_length": len(raw_response)
             }
 
-            # Terminal banner
             print("\n" + "#" * 70)
-            print(f"✨ [LLM RESPONSE] Context: {context_name} | ID: {req_id} | Latency: {latency_ms}ms")
+            print(f"✨ [LLM RESPONSE SUCCESS] Context: {context_name} | ID: {req_id} | ⚡ Latency: {latency_ms}ms")
             print(f"🕒 Timestamp: {timestamp_res}")
-            print(f"📊 Tokens:    Prompt={tokens_info.get('prompt_tokens')} | Completion={tokens_info.get('completion_tokens')} | Total={tokens_info.get('total_tokens')}")
+            print(f"📊 Tokens: Prompt={tokens_info.get('prompt_tokens')} | Completion={tokens_info.get('completion_tokens')} | Total={tokens_info.get('total_tokens')}")
             print("-" * 70)
-            print("📝 Content:")
-            print(raw_response[:800] + ("..." if len(raw_response) > 800 else ""))
+            print("📝 Content Preview:")
+            print(raw_response[:500] + ("..." if len(raw_response) > 500 else ""))
             print("#" * 70 + "\n")
 
-            # Persist to log file
             cls._append_to_log(res_log_entry)
-
             return raw_response
 
-        except Exception as e:
-            latency_ms = round((time.perf_counter() - start_time) * 1000, 1)
-            err_log_entry = {
-                "event": "LLM_ERROR",
-                "request_id": req_id,
-                "context": context_name,
-                "latency_ms": latency_ms,
-                "error": str(e)
-            }
-            print(f"\n❌ [LLM ERROR] ID: {req_id} | {e}\n")
-            cls._append_to_log(err_log_entry)
-            return None
+        except Exception as primary_err:
+            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            print(f"\n⚠️ [LLM PRIMARY FAIL] ID: {req_id} | Model: {cls.MODEL_NAME} failed after {latency_ms}ms: {primary_err}")
+
+            # Fast attempt with fallback model (timeout 3.5s)
+            fallback_start = time.perf_counter()
+            try:
+                print(f"🔄 [LLM FALLBACK ATTEMPT] Dispatching to {cls.FALLBACK_MODEL}...")
+                fallback_kwargs = {**kwargs, "model": cls.FALLBACK_MODEL, "timeout": 3.5}
+                fb_completion = client.chat.completions.create(**fallback_kwargs)
+                fb_latency_ms = round((time.perf_counter() - fallback_start) * 1000, 2)
+                total_latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+
+                raw_fb_response = fb_completion.choices[0].message.content or ""
+                print(f"✨ [LLM FALLBACK SUCCESS] Model: {cls.FALLBACK_MODEL} succeeded in {fb_latency_ms}ms (Total: {total_latency_ms}ms)")
+                return raw_fb_response
+            except Exception as fb_err:
+                total_fail_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                err_log_entry = {
+                    "event": "LLM_FAST_FAIL",
+                    "request_id": req_id,
+                    "context": context_name,
+                    "latency_ms": total_fail_ms,
+                    "primary_error": str(primary_err),
+                    "fallback_error": str(fb_err)
+                }
+                print(f"❌ [LLM ALL MODELS FAILED] ID: {req_id} | Elapsed: {total_fail_ms}ms -> Switching to instant 1ms heuristic engine.\n")
+                cls._append_to_log(err_log_entry)
+                return None
 
     @classmethod
     def _append_to_log(cls, entry: Dict[str, Any]):

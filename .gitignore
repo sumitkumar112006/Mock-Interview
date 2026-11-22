@@ -90,6 +90,7 @@ candidate_voice.*
 *.sqlite3
 *.db
 *.db-journal
+Backend/Sessions/*
 
 # IDEs, Editors & OS Files
 .vscode/*

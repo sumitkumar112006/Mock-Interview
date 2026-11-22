@@ -1,5 +1,6 @@
 import uuid
 import json
+import time
 import re
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Union
@@ -8,6 +9,8 @@ from schemas.interview import (
     InterviewRound,
     InterviewQuestion,
     InterviewSession,
+    Difficulty,
+    DIFFICULTY_GUIDE,
 )
 from ai.llm.llm_manager import LLMManager
 from tools.context import (
@@ -25,11 +28,23 @@ You output only valid JSON, with no prose, markdown fences, or comments."""
 
 
 def build_prompt(plan, jd_text: str, resume_text: str) -> str:
+    diff_key = getattr(plan, "difficulty", Difficulty.intermediate)
+    if isinstance(diff_key, str):
+        try:
+            diff_key = Difficulty(diff_key.lower())
+        except ValueError:
+            diff_key = Difficulty.intermediate
+    guide = DIFFICULTY_GUIDE.get(diff_key, DIFFICULTY_GUIDE[Difficulty.intermediate])
+
     return f"""Design a 5-question progressive technical interview for this candidate.
 
 ## CONTEXT
 Target role: {plan.target_role}
-Seniority / difficulty: {plan.difficulty_level}
+Difficulty Level: {guide['label']}
+
+## DIFFICULTY & COMPLEXITY CALIBRATION ({guide['label']}):
+- Question Calibration: {guide['questions']}
+- Expected Candidate Depth: {guide['evaluation']}
 
 <job_description>
 {jd_text}
@@ -186,20 +201,35 @@ class InterviewService:
     def start_interview(
         cls,
         plan_or_role: Union[InterviewPlan, str] = "Software Engineer",
-        questions: Optional[List[InterviewQuestion]] = None
+        questions: Optional[List[InterviewQuestion]] = None,
+        custom_session_id: Optional[str] = None,
+        difficulty: Union[Difficulty, str] = Difficulty.intermediate
     ) -> InterviewSession:
         """
         Initializes and registers a new active interview session.
         """
-        session_id = f"session_{uuid.uuid4().hex[:12]}"
+        session_id = custom_session_id or f"session_{uuid.uuid4().hex[:12]}"
+
+        # Normalize difficulty
+        diff_key = difficulty
+        if isinstance(diff_key, str):
+            try:
+                diff_key = Difficulty(diff_key.lower())
+            except ValueError:
+                diff_key = Difficulty.intermediate
+        guide = DIFFICULTY_GUIDE.get(diff_key, DIFFICULTY_GUIDE[Difficulty.intermediate])
 
         if isinstance(plan_or_role, InterviewPlan):
             plan = plan_or_role
         else:
-            plan = cls.generate_interview_plan(target_role=str(plan_or_role))
+            plan = cls.generate_interview_plan(target_role=str(plan_or_role), seniority=guide["label"])
+
+        plan.difficulty = diff_key
+        plan.difficulty_level = guide["label"]
 
         # Generate custom tailored questions via LLM anchored directly to JD and Resume
         if not questions:
+            q_gen_start = time.perf_counter()
             questions = []
             jd_text = get_global_jd() or f"Role: {plan.target_role}\nSeniority: {plan.difficulty_level}\nRequirements: Fullstack development, architecture, performance, problem solving."
             resume_text = get_global_resume() or "Candidate with software engineering experience across frontend, backend, system architecture, and collaboration."
@@ -262,6 +292,8 @@ class InterviewService:
                     print(f"   ✅ Expected: {', '.join(q.expected_points)}")
                 print("-" * 75)
             print("=" * 75 + "\n")
+            q_gen_ms = round((time.perf_counter() - q_gen_start) * 1000, 1)
+            print(f"⏱️ [InterviewService] Prepared {len(questions)} interview questions in {q_gen_ms}ms (Source: {'LLM Generated' if parsed_list else 'Calibrated Question Bank'})\n")
 
         started_at = datetime.now(timezone.utc).isoformat()
 
@@ -282,10 +314,46 @@ class InterviewService:
 
     @classmethod
     def get_session(cls, session_id: str) -> InterviewSession:
-        """Retrieve an active or completed session by ID."""
+        """
+        Retrieve an active or completed session by ID.
+        If missing in memory (e.g. after server restart or dev hot-reload),
+        auto-recovers the session transparently so the candidate never experiences a 404 error.
+        """
         session = cls._sessions.get(session_id)
-        if not session:
-            raise KeyError(f"Interview session '{session_id}' not found.")
+        if session:
+            return session
+
+        print(f"🔄 [InterviewService] Session '{session_id}' not found in RAM (reloaded). Auto-recovering session...")
+
+        # 1. Restore questions from global questions context if available
+        from tools.context import get_global_questions
+        global_q = get_global_questions()
+        restored_questions = []
+        if global_q:
+            for idx, q in enumerate(global_q, start=1):
+                if isinstance(q, dict):
+                    restored_questions.append(
+                        InterviewQuestion(
+                            question_id=q.get("question_id") or f"q_{idx}",
+                            question_number=idx,
+                            round_name=q.get("round_name") or q.get("round", "Technical Core"),
+                            topic=q.get("topic", "Core Competency"),
+                            question_text=q.get("question_text") or q.get("question", "Interview Question"),
+                            intent=q.get("intent", "Assess engineering skills"),
+                            difficulty="Mid-Level",
+                            expected_points=q.get("expected_points") or q.get("expected", []),
+                            source=q.get("source")
+                        )
+                    )
+
+        # 2. Re-create / recover session and register in memory
+        session = cls.start_interview(
+            plan_or_role="Software Engineer",
+            questions=restored_questions if restored_questions else None,
+            custom_session_id=session_id
+        )
+        cls._sessions[session_id] = session
+        print(f"✅ [InterviewService] Session '{session_id}' successfully auto-recovered with {len(session.questions)} questions.")
         return session
 
     @classmethod
@@ -375,5 +443,15 @@ class InterviewService:
             "average_performance_score": avg_score,
             "completion_rate": f"{session.progress_percentage}%"
         }
+
+        # Automatically trigger Entire Report Evaluation and persist to Sessions/{session_id}.json
+        try:
+            from services.report_service import ReportService
+            full_report = ReportService.evaluate_entire_report(session_id)
+            summary["report"] = full_report.model_dump()
+            summary["saved_path"] = full_report.saved_path
+        except Exception as e:
+            print(f"[InterviewService] Notice during end_interview report generation: {e}")
+
         session.final_summary = summary
         return summary

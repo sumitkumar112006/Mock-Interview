@@ -23,6 +23,7 @@ class CreatePlanRequest(BaseModel):
 
 class StartInterviewRequest(BaseModel):
     plan_or_role: str = "Fullstack Software Engineer"
+    difficulty: str = "intermediate"
 
 
 class SubmitAnswerRequest(BaseModel):
@@ -30,6 +31,7 @@ class SubmitAnswerRequest(BaseModel):
     question_text: str
     answer_text: str
     expected_points: Optional[List[str]] = None
+    difficulty: Optional[str] = None
 
 
 class MatchRequest(BaseModel):
@@ -65,7 +67,10 @@ def start_session_endpoint(req: StartInterviewRequest):
     POST /api/v1/interview/start
     Start new interview session.
     """
-    return InterviewService.start_interview(plan_or_role=req.plan_or_role)
+    return InterviewService.start_interview(
+        plan_or_role=req.plan_or_role,
+        difficulty=req.difficulty
+    )
 
 
 @router.get("/{session_id}/question", response_model=Optional[InterviewQuestion])
@@ -98,17 +103,36 @@ def submit_answer_endpoint(session_id: str, req: SubmitAnswerRequest):
     POST /api/v1/interview/{session_id}/answer
     Evaluate candidate response, update progress, and provide feedback.
     """
+    if not req.answer_text or not req.answer_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Answer text cannot be empty. Please record audio or enter an answer."
+        )
+
     try:
+        session = InterviewService.get_session(session_id)
+        target_diff = req.difficulty or getattr(session.plan, "difficulty", "intermediate")
+
         eval_result = EvaluationService.evaluate_candidate_answer(
             question_id=req.question_id,
             question_text=req.question_text,
             answer_text=req.answer_text,
-            expected_points=req.expected_points
+            expected_points=req.expected_points,
+            difficulty=str(target_diff)
         )
-        InterviewService.update_interview_progress(session_id, eval_result.model_dump())
+        history_record = {
+            **eval_result.model_dump(),
+            "question_text": req.question_text,
+            "answer_text": req.answer_text,
+        }
+        InterviewService.update_interview_progress(session_id, history_record)
         return eval_result
     except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=f"Session or question not found: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Answer evaluation error: {str(e)}")
 
 
 @router.post("/{session_id}/end")

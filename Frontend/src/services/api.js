@@ -39,11 +39,11 @@ export async function uploadResume({ file, text }) {
 /**
  * Start Interview Session
  */
-export async function startInterviewSession({ planOrRole = 'Fullstack Software Engineer' } = {}) {
+export async function startInterviewSession({ planOrRole = 'Fullstack Software Engineer', difficulty = 'intermediate' } = {}) {
   const res = await fetch(`${API_BASE}/api/v1/interview/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_or_role: planOrRole }),
+    body: JSON.stringify({ plan_or_role: planOrRole, difficulty }),
   });
   if (!res.ok) throw new Error(`Failed to start interview: ${res.statusText}`);
   return await res.json();
@@ -95,6 +95,28 @@ export async function endInterview(sessionId) {
     method: 'POST',
   });
   if (!res.ok) throw new Error(`Failed to end interview: ${res.statusText}`);
+  return await res.json();
+}
+
+/**
+ * Generate Entire Session Evaluation Report (saves to Sessions/{sessionId}.json)
+ */
+export async function generateSessionReport(sessionId, targetRole = null) {
+  const res = await fetch(`${API_BASE}/api/v1/reports/generate/${sessionId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target_role: targetRole }),
+  });
+  if (!res.ok) throw new Error(`Failed to generate session report: ${res.statusText}`);
+  return await res.json();
+}
+
+/**
+ * Get Saved Session Report from Sessions/{sessionId}.json
+ */
+export async function getSessionReport(sessionId) {
+  const res = await fetch(`${API_BASE}/api/v1/reports/${sessionId}`);
+  if (!res.ok) throw new Error(`Failed to get session report: ${res.statusText}`);
   return await res.json();
 }
 

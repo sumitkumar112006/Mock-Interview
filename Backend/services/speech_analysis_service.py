@@ -1,6 +1,7 @@
 import os
 import io
 import re
+import time
 import wave
 import base64
 import asyncio
@@ -66,10 +67,11 @@ class SpeechAnalysisService:
                 detail="GROQ_API_KEY is not configured or missing in Backend/.env"
             )
 
-        # 2. Call Groq Whisper API
+        # 2. Call Groq Whisper API with millisecond tracking and strict 8s timeout
+        start_time = time.perf_counter()
         try:
             from groq import Groq
-            client = Groq(api_key=groq_api_key)
+            client = Groq(api_key=groq_api_key, timeout=8.0, max_retries=1)
 
             # Ensure filename has an extension Groq Whisper accepts
             base_name = filename if "." in filename else f"{filename}.webm"
@@ -86,9 +88,10 @@ class SpeechAnalysisService:
                 temperature=0.0
             )
 
+            latency_ms = round((time.perf_counter() - start_time) * 1000, 1)
             raw_text = getattr(transcription, "text", "") or ""
             cleaned_text = raw_text.strip()
-            print(f"✨ [GROQ WHISPER SUCCESS] Transcribed: \"{cleaned_text}\"")
+            print(f"✨ [GROQ WHISPER SUCCESS] Transcribed in {latency_ms}ms: \"{cleaned_text}\"")
 
             words = cleaned_text.split()
             word_count = len(words)
@@ -108,11 +111,12 @@ class SpeechAnalysisService:
         except HTTPException:
             raise
         except Exception as e:
+            latency_ms = round((time.perf_counter() - start_time) * 1000, 1)
             err_msg = str(e)
-            print(f"❌ [GROQ WHISPER ERROR] {type(e).__name__}: {err_msg}")
+            print(f"❌ [GROQ WHISPER ERROR] {type(e).__name__} after {latency_ms}ms: {err_msg}")
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Groq Whisper transcription failed: {err_msg}"
+                detail=f"Groq Whisper transcription failed after {latency_ms}ms: {err_msg}"
             )
 
     @classmethod

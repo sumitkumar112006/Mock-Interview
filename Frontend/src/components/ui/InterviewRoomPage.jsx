@@ -40,6 +40,7 @@ export function InterviewRoomPage({
   const roleTitle = session?.target_role || 'Software Engineer';
   const currentQNum = activeQuestion?.question_number || 1;
   const totalQuestions = session?.questions?.length || 5;
+  const isLastQuestion = currentQNum >= totalQuestions;
 
   const handlePrimaryClick = () => {
     if (isAnalyzing) return;
@@ -399,8 +400,13 @@ export function InterviewRoomPage({
         </div>
 
         <div className="dock-right">
-          <button type="button" className="dock-secondary-btn" onClick={onNextQuestion}>
-            Next Question ↗
+          <button
+            type="button"
+            className="dock-secondary-btn"
+            onClick={isLastQuestion ? onFinishSession : onNextQuestion}
+            style={isLastQuestion ? { borderColor: '#a78bfa', color: '#c4b5fd' } : undefined}
+          >
+            {isLastQuestion ? 'Finish Interview ✓' : 'Next Question ↗'}
           </button>
         </div>
       </footer>
